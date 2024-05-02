@@ -8,19 +8,22 @@
 ###
 import os
 
-# todo: don't override this if the user has that setup already
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+# TODO: don't override this if the user has that setup already
+if not os.environ.get("TF_FORCE_GPU_ALLOW_GROWTH"):
+    os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+
+if not os.environ.get("TF_GPU_ALLOCATOR"):
+    os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
 import ast
 import contextlib
 import importlib
 import json
 import logging
-import os
 import shutil
 import traceback
 from importlib import reload
+from pathlib import Path
 
 from aiohttp import web
 from server import PromptServer
@@ -39,11 +42,10 @@ WEB_DIRECTORY = "./web"
 __version__ = "0.2.0"
 
 
-def extract_nodes_from_source(filename):
+def extract_nodes_from_source(filename: Path):
     source_code = ""
 
-    with open(filename, encoding="utf8") as file:
-        source_code = file.read()
+    source_code = filename.read_text(encoding="utf-8")
 
     nodes = []
 
@@ -68,7 +70,7 @@ def extract_nodes_from_source(filename):
 
 
 def load_nodes():
-    errors = []
+    errors: list[str] = []
     nodes = []
     nodes_failed = []
 
@@ -80,14 +82,16 @@ def load_nodes():
                 module = importlib.import_module(
                     f".nodes.{module_name}", package=__package__
                 )
-                _nodes = module.__nodes__
+                _nodes = getattr(module, "__nodes__", [])
                 nodes.extend(_nodes)
                 log.debug(f"Imported {module_name} nodes")
 
             except AttributeError:
+                log.debug(f"Skipping wip module {module_name}")
                 pass  # wip nodes
             except Exception:
                 error_message = traceback.format_exc().splitlines()[-1]
+
                 errors.append(
                     f"Failed to import module {module_name} because {error_message}"
                 )
@@ -107,25 +111,82 @@ def load_nodes():
 
 
 # - REGISTER WEB EXTENSIONS
-web_extensions_root = comfy_dir / "web" / "extensions"
-web_mtb = web_extensions_root / "mtb"
+def uninstall_old_web_extensions():
+    web_extensions_root = comfy_dir / "web" / "extensions"
+    web_mtb = web_extensions_root / "mtb"
 
-if web_mtb.exists() and hasattr(nodes, "EXTENSION_WEB_DIRS"):
-    try:
-        if web_mtb.is_symlink():
-            web_mtb.unlink()
-        else:
-            shutil.rmtree(web_mtb)
-    except Exception as e:
-        log.warning(
-            f"Failed to remove web mtb directory: {e}\nPlease manually remove it from disk ({web_mtb}) and restart the server."
-        )
+    if web_mtb.exists() and hasattr(nodes, "EXTENSION_WEB_DIRS"):
+        try:
+            if web_mtb.is_symlink():
+                web_mtb.unlink()
+            else:
+                shutil.rmtree(web_mtb)
+        except Exception as e:
+            log.warning(
+                f"Failed to remove web mtb directory: {e}\nPlease manually remove it from disk ({web_mtb}) and restart the server."
+            )
+
+
+# uninstall_old_web_extensions()
+
+
+# - GATHER WIKI PAGES
+def wiki_to_classname(s: str):
+    wiki_name = s.replace("nodes-", "", 1)
+    return "MTB_" + "".join(
+        [part.capitalize() for part in wiki_name.split("-")]
+    )
+
+
+def classname_to_wiki(s: str):
+    classname = s.replace("MTB_", "")
+    parts = []
+    start = 0
+    for i in range(1, len(classname)):
+        if classname[i].isupper():
+            parts.append(classname[start:i].lower())
+            start = i
+    parts.append(classname[start:].lower())
+    return "nodes-" + "-".join(parts)
+
+
+wiki = here / "wiki"
+node_docs = {}
+if wiki.exists() and wiki.is_dir():
+    node_docs = {
+        wiki_to_classname(x.stem): x.read_text(encoding="utf-8")
+        for x in (wiki / "nodes").glob("*.md")
+    }
 
 
 # - REGISTER NODES
+
+
+MTB_EXPORT = os.environ.get("MTB_EXPORT")
+
 nodes, failed = load_nodes()
 for node_class in nodes:
-    class_name = node_class.__name__
+    class_name: str = node_class.__name__
+    linked_doc = node_docs.get(class_name)
+
+    if not hasattr(node_class, "DESCRIPTION"):
+        if linked_doc:
+            log.debug(f"Found linked doc for {class_name}, using it")
+            node_class.DESCRIPTION = linked_doc
+        elif node_class.__doc__:
+            log.debug(f"Using __doc__ as description for {class_name}")
+            node_class.DESCRIPTION = node_class.__doc__
+            if MTB_EXPORT:
+                wiki_name = classname_to_wiki(class_name)
+                (wiki / "nodes" / wiki_name + ".md").write_text(
+                    node_class.__doc__, encoding="utf-8"
+                )
+
+        else:
+            log.debug(
+                f"None of the methods could retrieve documentation for {class_name}"
+            )
+
     node_label = f"{get_label(class_name)} (mtb)"
     NODE_CLASS_MAPPINGS[node_label] = node_class
     NODE_DISPLAY_NAME_MAPPINGS[class_name] = node_label

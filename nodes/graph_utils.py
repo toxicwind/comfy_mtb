@@ -14,6 +14,7 @@ from PIL import Image
 
 from ..log import log
 from ..utils import (
+    EASINGS,
     apply_easing,
     get_server_info,
     numpy_NFOV,
@@ -168,11 +169,28 @@ class MTB_MatchDimensions:
         return (resized_source, new_width, new_height)
 
 
-class MTB_FloatsToFloat:
-    """AD, IPA, Fitz etc have commonly choose to mistype float lists as FLOAT.
+class MTB_FloatToFloats:
+    """Conversion utility for compatibility with other extensions (AD, IPA, Fitz are using FLOAT to represent list of floats.)"""
 
-    This is just a hack to be compatible with these
-    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "float": ("FLOAT", {"default": 0.0, "forceInput": True}),
+            }
+        }
+
+    RETURN_TYPES = ("FLOATS",)
+    RETURN_NAMES = ("floats",)
+    CATEGORY = "mtb/utils"
+    FUNCTION = "convert"
+
+    def convert(self, float):
+        return (float,)
+
+
+class MTB_FloatsToFloat:
+    """Conversion utility for compatibility with other extensions (AD, IPA, Fitz are using FLOAT to represent list of floats.)"""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -498,30 +516,7 @@ class MTB_FitNumber:
                 "target_min": ("FLOAT", {"default": 0.0, "step": 0.01}),
                 "target_max": ("FLOAT", {"default": 1.0, "step": 0.01}),
                 "easing": (
-                    [
-                        "Linear",
-                        "Sine In",
-                        "Sine Out",
-                        "Sine In/Out",
-                        "Quart In",
-                        "Quart Out",
-                        "Quart In/Out",
-                        "Cubic In",
-                        "Cubic Out",
-                        "Cubic In/Out",
-                        "Circ In",
-                        "Circ Out",
-                        "Circ In/Out",
-                        "Back In",
-                        "Back Out",
-                        "Back In/Out",
-                        "Elastic In",
-                        "Elastic Out",
-                        "Elastic In/Out",
-                        "Bounce In",
-                        "Bounce Out",
-                        "Bounce In/Out",
-                    ],
+                    EASINGS,
                     {"default": "Linear"},
                 ),
             }
@@ -596,4 +591,5 @@ __nodes__ = [
     MTB_MatchDimensions,
     MTB_AutoPanEquilateral,
     MTB_FloatsToFloat,
+    MTB_FloatToFloats,
 ]
